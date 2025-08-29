@@ -81,7 +81,7 @@
         .edit-button-icon {
             @apply absolute top-3 right-3 text-gray-500 hover:text-red-500 transition-colors duration-200 cursor-pointer;
         }
-        #message-modal .modal-content, #confirmation-modal .modal-content {
+        #message-modal .modal-content, #confirmation-modal .modal-content, #admin-login-modal .modal-content {
             text-align: center;
         }
         #chat-container {
@@ -130,12 +130,20 @@
                 ประสบการณ์แม่ครัวแนวหน้าประจำหมู่บ้านมายาวนาน
             </p>
             <div class="flex flex-col sm:flex-row justify-center items-center gap-4 mt-8">
-                <button onclick="openAddModal()" class="bg-orange-500 hover:bg-orange-600 text-white font-bold py-3 px-6 rounded-full shadow-lg transition-transform transform hover:scale-105">
+                <!-- Add New Menu button, visible only to admin -->
+                <button id="add-menu-btn" onclick="openAddModal()" class="bg-orange-500 hover:bg-orange-600 text-white font-bold py-3 px-6 rounded-full shadow-lg transition-transform transform hover:scale-105" style="display:none;">
                     <i class="fa-solid fa-plus"></i> เพิ่มเมนูใหม่
                 </button>
                 <button onclick="openChefChatModal()" class="bg-purple-500 hover:bg-purple-600 text-white font-bold py-3 px-6 rounded-full shadow-lg transition-transform transform hover:scale-105">
                     ✨ ถามเชฟเทวดาประจำร้าน
                 </button>
+                <button onclick="openAdminLoginModal()" class="bg-gray-500 hover:bg-gray-600 text-white font-bold py-3 px-6 rounded-full shadow-lg transition-transform transform hover:scale-105">
+                    เข้าสู่ระบบ Admin
+                </button>
+            </div>
+            <div class="mt-4 text-sm text-white">
+                <p>User ID: <span id="user-id-display">...</span></p>
+                <p>Admin ID: <span id="admin-id-display">...</span></p>
             </div>
         </header>
 
@@ -205,7 +213,7 @@
                     <input type="text" id="edit-price" class="w-full p-2 border rounded" required>
                 </div>
                 <div class="flex justify-between gap-4 mt-6">
-                    <button type="button" onclick="deleteItem()" id="delete-button" class="bg-red-500 text-white px-4 py-2 rounded-lg hover:bg-red-600 flex-1">ลบเมนู</button>
+                    <button type="button" onclick="deleteItem()" id="delete-button" class="bg-red-500 text-white px-4 py-2 rounded-lg hover:bg-red-600 flex-1" style="display:none;">ลบเมนู</button>
                     <div class="flex flex-1 justify-end gap-4">
                         <button type="button" onclick="closeModal()" class="bg-gray-300 text-gray-800 px-4 py-2 rounded-lg hover:bg-gray-400">ยกเลิก</button>
                         <button type="submit" class="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600">บันทึก</button>
@@ -234,6 +242,19 @@
         </div>
     </div>
 
+    <!-- Admin Login Modal -->
+    <div id="admin-login-modal" class="modal">
+        <div class="modal-content">
+            <h3 class="text-2xl font-semibold mb-4">เข้าสู่ระบบ Admin</h3>
+            <p class="mb-4 text-gray-600">กรุณากรอก Admin ID ที่ต้องการเข้าสู่ระบบ</p>
+            <input type="text" id="admin-id-input" class="w-full p-2 border rounded-lg mb-4 text-center text-gray-700" placeholder="กรอก Admin ID">
+            <div class="flex justify-center gap-4">
+                <button onclick="loginAsAdmin()" class="bg-blue-500 text-white px-6 py-2 rounded-lg hover:bg-blue-600">ยืนยัน</button>
+                <button onclick="closeAdminLoginModal()" class="bg-gray-300 text-gray-800 px-6 py-2 rounded-lg hover:bg-gray-400">ยกเลิก</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Message Modal -->
     <div id="message-modal" class="modal">
         <div class="modal-content">
@@ -255,7 +276,7 @@
 
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, collection, onSnapshot, setDoc, doc, getDocs, addDoc, deleteDoc, getDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
         import { setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
@@ -274,6 +295,9 @@
         let confirmationCallback = null;
         let chatHistory = [];
 
+        // Define a hardcoded Admin ID for this application
+        const ADMIN_USER_ID = "admin-12345"; 
+
         const menuContainer = document.getElementById('menu-container');
         const editModal = document.getElementById('edit-modal');
         const editForm = document.getElementById('edit-form');
@@ -291,6 +315,11 @@
         const generateDescBtn = document.getElementById('generate-desc-btn');
         const editNameInput = document.getElementById('edit-name');
         const editDescInput = document.getElementById('edit-description');
+        const addMenuBtn = document.getElementById('add-menu-btn');
+        const userIdDisplay = document.getElementById('user-id-display');
+        const adminIdDisplay = document.getElementById('admin-id-display');
+        const adminLoginModal = document.getElementById('admin-login-modal');
+        const adminIdInput = document.getElementById('admin-id-input');
 
         const menuData = [
             { id: "larb-moo", name: "ลาบหมู", description: "ลาบหมูสับคลุกเคล้ากับข้าวคั่วหอมๆ พริกป่น มะนาว และหอมแดง ปรุงรสจัดจ้าน", price: "50 บาท/ถุง", icon: "fa-pepper-hot" },
@@ -307,26 +336,30 @@
                 db = getFirestore(app);
                 auth = getAuth(app);
                 
+                // Sign in anonymously by default
                 if (initialAuthToken) {
                     await signInWithCustomToken(auth, initialAuthToken);
                 } else {
                     await signInAnonymously(auth);
                 }
 
-                auth.onAuthStateChanged(async (user) => {
+                onAuthStateChanged(auth, async (user) => {
                     if (user) {
                         userId = user.uid;
-                        // Use the new, more specific path for private user data
-                        const menuCollectionPath = `artifacts/${appId}/users/${userId}/menu`;
+                        userIdDisplay.textContent = userId;
+                        adminIdDisplay.textContent = ADMIN_USER_ID;
+
+                        const isUserAdmin = userId === ADMIN_USER_ID;
+                        addMenuBtn.style.display = isUserAdmin ? 'inline-block' : 'none';
+
+                        const menuCollectionPath = `artifacts/${appId}/public/data/menu`;
                         menuCollection = collection(db, menuCollectionPath);
                         
-                        // Check if the menu collection is empty and populate it if needed
                         await checkAndPopulateMenu();
                         
-                        // Listen for real-time changes to the menu
                         onSnapshot(menuCollection, (snapshot) => {
                             const items = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                            renderMenu(items);
+                            renderMenu(items, isUserAdmin);
                         }, (error) => {
                             console.error("Error listening to Firestore:", error);
                             showMessageModal(`เกิดข้อผิดพลาดในการโหลดเมนู: ${error.message}`);
@@ -349,7 +382,6 @@
                     for (const item of menuData) {
                         await setDoc(doc(menuCollection, item.id), item);
                     }
-                    showMessageModal("เมนูเริ่มต้นถูกเพิ่มเรียบร้อยแล้ว!");
                 }
             } catch (error) {
                 console.error("Error populating menu:", error);
@@ -357,11 +389,15 @@
             }
         }
 
-        function renderMenu(items) {
+        function renderMenu(items, isUserAdmin) {
             menuContainer.innerHTML = '';
-            // Sort items by name to ensure consistent display
             items.sort((a, b) => a.name.localeCompare(b.name, 'th'));
             items.forEach(item => {
+                const editButtonHtml = isUserAdmin ? 
+                    `<button onclick="openModal('${item.id}', '${item.name}', \`${item.description}\`, '${item.price}')" class="edit-button-icon">
+                        <i class="fa-solid fa-pen-to-square"></i>
+                    </button>` : '';
+
                 const itemHtml = `
                     <div class="bg-card-light text-gray-800 rounded-xl p-6 border border-card-light hover-effect relative">
                         <h3 class="text-2xl font-semibold mb-2 ${item.icon && (item.icon.includes('hot-tub') || item.icon.includes('seedling')) ? 'text-lime-500' : 'text-red-600'}">
@@ -376,9 +412,7 @@
                                 สั่งเลย
                             </button>
                         </div>
-                        <button onclick="openModal('${item.id}', '${item.name}', \`${item.description}\`, '${item.price}')" class="edit-button-icon">
-                            <i class="fa-solid fa-pen-to-square"></i>
-                        </button>
+                        ${editButtonHtml}
                     </div>
                 `;
                 menuContainer.innerHTML += itemHtml;
@@ -395,22 +429,30 @@
         };
 
         window.openAddModal = () => {
+            if (userId !== ADMIN_USER_ID) {
+                showMessageModal("คุณไม่มีสิทธิ์ในการเพิ่มเมนู");
+                return;
+            }
             modalTitle.textContent = "เพิ่มเมนูใหม่";
-            document.getElementById('edit-id').value = ""; // Clear ID for new item
+            document.getElementById('edit-id').value = "";
             document.getElementById('edit-name').value = "";
             document.getElementById('edit-description').value = "";
             document.getElementById('edit-price').value = "";
-            deleteButton.style.display = 'none'; // Hide delete button for new item
+            deleteButton.style.display = 'none';
             editModal.style.display = 'flex';
         };
 
         window.openModal = (id, name, description, price) => {
+            if (userId !== ADMIN_USER_ID) {
+                showMessageModal("คุณไม่มีสิทธิ์ในการแก้ไขเมนู");
+                return;
+            }
             modalTitle.textContent = "แก้ไขเมนู";
             document.getElementById('edit-id').value = id;
             document.getElementById('edit-name').value = name;
             document.getElementById('edit-description').value = description;
             document.getElementById('edit-price').value = price;
-            deleteButton.style.display = 'block'; // Show delete button for existing item
+            deleteButton.style.display = 'block';
             editModal.style.display = 'flex';
         };
 
@@ -434,7 +476,33 @@
             chefChatModal.style.display = 'none';
         };
 
+        window.openAdminLoginModal = () => {
+            adminLoginModal.style.display = 'flex';
+        };
+
+        window.closeAdminLoginModal = () => {
+            adminLoginModal.style.display = 'none';
+        };
+
+        window.loginAsAdmin = async () => {
+            const enteredId = adminIdInput.value.trim();
+            if (enteredId === ADMIN_USER_ID) {
+                closeAdminLoginModal();
+                showMessageModal("เข้าสู่ระบบในฐานะ Admin เรียบร้อยแล้ว!");
+                // Note: In a real app, you would have a backend to generate a custom token for the admin.
+                // For this example, we'll just rely on the hardcoded ID check.
+            } else {
+                showMessageModal("Admin ID ไม่ถูกต้อง");
+            }
+        };
+
         window.deleteItem = async () => {
+            if (userId !== ADMIN_USER_ID) {
+                showMessageModal("คุณไม่มีสิทธิ์ในการลบเมนู");
+                closeModal();
+                return;
+            }
+
             const id = document.getElementById('edit-id').value;
             showConfirmationModal("คุณแน่ใจหรือไม่ว่าต้องการลบเมนูนี้?", async () => {
                 try {
@@ -469,6 +537,10 @@
 
         editForm.addEventListener('submit', async (e) => {
             e.preventDefault();
+            if (userId !== ADMIN_USER_ID) {
+                showMessageModal("คุณไม่มีสิทธิ์ในการบันทึกเมนู");
+                return;
+            }
             const id = document.getElementById('edit-id').value;
             const name = document.getElementById('edit-name').value;
             const description = document.getElementById('edit-description').value;
@@ -476,17 +548,15 @@
             
             try {
                 if (id) {
-                    // This is an update
                     const itemRef = doc(menuCollection, id);
                     await setDoc(itemRef, { name, description, price }, { merge: true });
                     showMessageModal("แก้ไขเมนูสำเร็จ!");
                 } else {
-                    // This is a new item
                     const newItem = {
                         name,
                         description,
                         price,
-                        icon: "fa-utensils" // Default icon for new items
+                        icon: "fa-utensils"
                     };
                     await addDoc(menuCollection, newItem);
                     showMessageModal("เพิ่มเมนูใหม่สำเร็จ!");
@@ -508,7 +578,6 @@
                 return;
             }
 
-            // Show loading state
             generateDescBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> กำลังเขียน...';
             generateDescBtn.disabled = true;
 
@@ -563,13 +632,11 @@
             const message = chatInput.value.trim();
             if (!message) return;
 
-            // Add user message to chat history
             chatHistory.push({ role: "user", parts: [{ text: message }] });
             appendMessage(message, "chat-user");
             chatInput.value = "";
-            chatInput.disabled = true; // Disable input while AI is thinking
+            chatInput.disabled = true;
 
-            // Show AI thinking state
             const thinkingMessage = document.createElement("div");
             thinkingMessage.className = "chat-message chat-ai animate-pulse";
             thinkingMessage.textContent = "AI กำลังคิดคำตอบ...";
@@ -625,10 +692,13 @@
             chatContainer.prepend(messageDiv);
         }
 
-        // Add event listeners
+        // Add event listeners and global functions
         window.generateDescription = generateDescription;
         window.openChefChatModal = openChefChatModal;
         window.closeChefChatModal = closeChefChatModal;
+        window.openAdminLoginModal = openAdminLoginModal;
+        window.closeAdminLoginModal = closeAdminLoginModal;
+        window.loginAsAdmin = loginAsAdmin;
         chatForm.addEventListener('submit', sendMessage);
 
         initFirebase();
